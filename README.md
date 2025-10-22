@@ -11,6 +11,6 @@ conda activate pdf-scan-verification
 pip install PyMuPDF pyinstaller
 
 # 打包EXE
-pyinstaller --onefile --windowed --name "PDF扫描件伪造验证工具" ./pdf-scan-verification-update-v1.py
+pyinstaller --onefile --windowed --name "PDF扫描件伪造验证工具" ./multiple-layers-verification-v8.py
 
 ```
