@@ -8,7 +8,7 @@ conda create -n pdf-scan-verification python=3.11
 conda activate pdf-scan-verification
 
 # 安装依赖
-pip install PyMuPDF pyinstaller
+pip install PyMuPDF pyinstaller opencv-python numpy pillow
 
 # 打包检测多图层伪造公章工具
 pyinstaller --onefile --windowed --name "多图层伪造公章工具" ./multiple-layers-verification-v8.py
