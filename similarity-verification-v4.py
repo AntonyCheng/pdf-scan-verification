@@ -6,7 +6,7 @@ from PIL import Image
 
 
 class SealExtractor:
-    def __init__(self, output_dir='output2', seal_size=(256, 256)):
+    def __init__(self, output_dir='output', seal_size=(256, 256)):
         """
         初始化公章提取器
         :param output_dir: 输出目录

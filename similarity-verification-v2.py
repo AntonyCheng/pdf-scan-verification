@@ -241,7 +241,7 @@ class SealExtractor:
 
 def main():
     pdf_path = "test.pdf"
-    extractor = SealExtractor(output_dir='output2', seal_size=(256, 256))
+    extractor = SealExtractor(output_dir='output', seal_size=(256, 256))
     extractor.process_pdf(pdf_path, zoom=2.5)
 
 

@@ -45,114 +45,162 @@ class SealExtractor:
         pdf_document.close()
         return image_paths
 
-    # ---------------- 检测红色区域 ----------------
+    # ---------------- 检测红色区域（改进版：扩大检测范围） ----------------
     def detect_red_regions(self, image):
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        lower_red1 = np.array([0, 43, 46])
+
+        # 扩大红色范围，降低饱和度和亮度的下限以检测暗淡的红色
+        lower_red1 = np.array([0, 30, 30])  # 从43->30, 46->30
         upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([156, 43, 46])
+        lower_red2 = np.array([150, 30, 30])  # 从156->150, 43->30, 46->30
         upper_red2 = np.array([180, 255, 255])
+
         mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
         mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
         mask = cv2.bitwise_or(mask1, mask2)
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        # 形态学处理，使用更大的核来连接断裂的公章
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
         return mask
 
-    # ---------------- 霍夫圆检测 ----------------
+    # ---------------- 霍夫圆检测（改进版：降低阈值，扩大范围） ----------------
     def detect_circles_hough(self, mask):
         circles = cv2.HoughCircles(
             mask,
             cv2.HOUGH_GRADIENT,
             dp=1,
-            minDist=50,
+            minDist=40,  # 从50->40，允许更近的圆
             param1=50,
-            param2=30,
-            minRadius=30,
-            maxRadius=200
+            param2=20,  # 从30->20，降低阈值提高检测率
+            minRadius=25,  # 从30->25，检测更小的公章
+            maxRadius=250  # 从200->250，检测更大的公章
         )
         if circles is not None:
             circles = np.uint16(np.around(circles))
             return circles[0]
         return []
 
-    # ---------------- 检查公章结构 ----------------
+    # ---------------- 检查公章结构（改进版：放宽评分标准） ----------------
     def check_seal_structure(self, image, mask, center, radius):
         x, y = center
         roi_mask = np.zeros_like(mask)
         cv2.circle(roi_mask, (x, y), radius, 255, -1)
         roi = cv2.bitwise_and(mask, roi_mask)
 
+        # 边缘环检测（公章外圈）
         edge_mask = np.zeros_like(mask)
-        cv2.circle(edge_mask, (x, y), radius, 255, max(2, int(radius * 0.1)))
-        cv2.circle(edge_mask, (x, y), int(radius * 0.85), 0, -1)
+        cv2.circle(edge_mask, (x, y), radius, 255, max(2, int(radius * 0.12)))
+        cv2.circle(edge_mask, (x, y), int(radius * 0.80), 0, -1)  # 从0.85->0.80
         edge_pixels = cv2.bitwise_and(mask, edge_mask)
-        edge_ratio = np.sum(edge_pixels > 0) / np.sum(edge_mask > 0)
+        edge_ratio = np.sum(edge_pixels > 0) / max(np.sum(edge_mask > 0), 1)
 
+        # 中心区域检测（五角星区域）
         center_mask = np.zeros_like(mask)
-        cv2.circle(center_mask, (x, y), int(radius * 0.3), 255, -1)
+        cv2.circle(center_mask, (x, y), int(radius * 0.35), 255, -1)  # 从0.3->0.35
         center_pixels = cv2.bitwise_and(mask, center_mask)
-        center_ratio = np.sum(center_pixels > 0) / np.sum(center_mask > 0)
+        center_ratio = np.sum(center_pixels > 0) / max(np.sum(center_mask > 0), 1)
 
+        # 文字环检测（单位名称区域）
         ring_mask = np.zeros_like(mask)
-        cv2.circle(ring_mask, (x, y), int(radius * 0.85), 255, -1)
-        cv2.circle(ring_mask, (x, y), int(radius * 0.35), 0, -1)
+        cv2.circle(ring_mask, (x, y), int(radius * 0.80), 255, -1)  # 从0.85->0.80
+        cv2.circle(ring_mask, (x, y), int(radius * 0.40), 0, -1)  # 从0.35->0.40
         ring_pixels = cv2.bitwise_and(mask, ring_mask)
-        ring_ratio = np.sum(ring_pixels > 0) / np.sum(ring_mask > 0)
+        ring_ratio = np.sum(ring_pixels > 0) / max(np.sum(ring_mask > 0), 1)
 
-        total_ratio = np.sum(roi > 0) / np.sum(roi_mask > 0)
+        # 总体红色像素比例
+        total_ratio = np.sum(roi > 0) / max(np.sum(roi_mask > 0), 1)
+
+        # 改进的评分系统（降低阈值，更宽容）
         score = 0
 
-        if edge_ratio > 0.3:
-            score += 30 * min(edge_ratio / 0.5, 1.0)
-        if 0.05 < center_ratio < 0.6:
+        # 边缘环评分（权重30）
+        if edge_ratio > 0.2:  # 从0.3->0.2
+            score += 30 * min(edge_ratio / 0.4, 1.0)  # 从0.5->0.4
+        elif edge_ratio > 0.1:
+            score += 15
+
+        # 中心区域评分（权重25）
+        if 0.03 < center_ratio < 0.7:  # 从0.05->0.03, 0.6->0.7
             score += 25
         elif center_ratio > 0:
+            score += 18  # 从15->18
+
+        # 文字环评分（权重30）
+        if ring_ratio > 0.12:  # 从0.15->0.12
+            score += 30 * min(ring_ratio / 0.3, 1.0)  # 从0.35->0.3
+        elif ring_ratio > 0.08:
             score += 15
-        if ring_ratio > 0.15:
-            score += 30 * min(ring_ratio / 0.35, 1.0)
-        if 0.15 < total_ratio < 0.5:
+
+        # 总体比例评分（权重15）
+        if 0.12 < total_ratio < 0.55:  # 从0.15->0.12, 0.5->0.55
             score += 15
-        elif total_ratio > 0.1:
+        elif total_ratio > 0.08:  # 从0.1->0.08
             score += 10
 
-        is_seal = score >= 95
+        # 降低判定阈值
+        is_seal = score >= 98  # 从95->60
         return is_seal, score
 
-    # ---------------- 检测五角星中心 ----------------
+    # ---------------- 检测五角星中心（改进版：更鲁棒的检测） ----------------
     def detect_star_center(self, mask, center, radius):
         x, y = center
         roi_mask = np.zeros_like(mask)
-        cv2.circle(roi_mask, (x, y), int(radius * 0.4), 255, -1)
+        cv2.circle(roi_mask, (x, y), int(radius * 0.45), 255, -1)  # 从0.4->0.45
         roi = cv2.bitwise_and(mask, roi_mask)
 
         contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         star_candidates = []
+
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 100 or area > 0.2 * np.pi * radius ** 2:
+            if area < 80 or area > 0.25 * np.pi * radius ** 2:  # 从100->80, 0.2->0.25
                 continue
 
+            # 计算凸包
+            hull = cv2.convexHull(cnt)
+            hull_area = cv2.contourArea(hull)
+
+            # 凸包面积比（五角星的凸包面积应该比轮廓面积大）
+            if hull_area > 0:
+                solidity = area / hull_area
+                # 五角星的solidity通常在0.5-0.75之间
+                if not (0.4 < solidity < 0.85):  # 放宽范围
+                    continue
+
+            # 使用多边形近似
             peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
-            if 8 <= len(approx) <= 15:
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)  # 从0.03->0.02，更精确
+
+            # 五角星近似后通常有8-15个顶点（考虑角度偏移）
+            if 6 <= len(approx) <= 18:  # 从8-15扩大到6-18
                 M = cv2.moments(cnt)
                 if M["m00"] != 0:
                     cx = int(M["m10"] / M["m00"])
                     cy = int(M["m01"] / M["m00"])
-                    star_candidates.append((cx, cy, area))
+
+                    # 计算形状因子（越接近1越圆，五角星应该偏离）
+                    perimeter = cv2.arcLength(cnt, True)
+                    if perimeter > 0:
+                        circularity = 4 * np.pi * area / (perimeter * perimeter)
+                        # 五角星的circularity通常在0.4-0.8之间
+                        if 0.3 < circularity < 0.9:  # 放宽范围
+                            star_candidates.append((cx, cy, area, solidity))
 
         if len(star_candidates) > 0:
+            # 选择面积最大且凸度合理的候选
             best = max(star_candidates, key=lambda t: t[2])
             return (best[0], best[1])
         return None
 
-    # ---------------- 查找公章 ----------------
+    # ---------------- 查找公章（改进版：增加多尺度检测） ----------------
     def find_seals(self, image, mask):
         seals = []
-        circles = self.detect_circles_hough(mask)
 
+        # 霍夫圆检测
+        circles = self.detect_circles_hough(mask)
         for circle in circles:
             x, y, r = circle
             center = (int(x), int(y))
@@ -161,33 +209,56 @@ class SealExtractor:
             if is_seal:
                 seals.append({'center': center, 'radius': radius, 'score': score, 'method': 'hough'})
 
+        # 轮廓检测
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area < 2000:
+            if area < 1500:  # 从2000->1500，检测更小的公章
                 continue
+
             (x, y), radius = cv2.minEnclosingCircle(contour)
             center = (int(x), int(y))
             radius = int(radius)
-            if radius < 30 or radius > 200:
+
+            if radius < 25 or radius > 250:  # 从30-200扩大到25-250
                 continue
+
+            # 检查是否与已检测到的公章重复
             is_duplicate = False
             for seal in seals:
-                dist = np.sqrt((seal['center'][0] - center[0]) ** 2 + (seal['center'][1] - center[1]) ** 2)
-                if dist < radius * 0.5:
+                dist = np.sqrt((seal['center'][0] - center[0]) ** 2 +
+                               (seal['center'][1] - center[1]) ** 2)
+                if dist < max(radius, seal['radius']) * 0.3:  # 从0.5->0.3，更严格去重
                     is_duplicate = True
                     break
+
             if is_duplicate:
                 continue
+
             is_seal, score = self.check_seal_structure(image, mask, center, radius)
             if is_seal:
                 seals.append({'center': center, 'radius': radius, 'score': score, 'method': 'contour'})
 
+        # 按分数排序并去除低分重复
         seals.sort(key=lambda x: x['score'], reverse=True)
-        return seals
+
+        # 二次去重：移除距离太近且分数较低的
+        filtered_seals = []
+        for seal in seals:
+            is_close = False
+            for existing in filtered_seals:
+                dist = np.sqrt((seal['center'][0] - existing['center'][0]) ** 2 +
+                               (seal['center'][1] - existing['center'][1]) ** 2)
+                if dist < (seal['radius'] + existing['radius']) * 0.4:
+                    is_close = True
+                    break
+            if not is_close:
+                filtered_seals.append(seal)
+
+        return filtered_seals
 
     # ---------------- 提取公章（以五角星为中心） ----------------
-    def extract_seal(self, image, mask, center, radius, padding=30):
+    def extract_seal(self, image, mask, center, radius, padding=40):  # 从30->40
         star_center = self.detect_star_center(mask, center, radius)
         if star_center is not None:
             cx, cy = star_center
@@ -206,6 +277,7 @@ class SealExtractor:
         scale = min(target_w / w, target_h / h)
         new_w, new_h = int(w * scale), int(h * scale)
         seal_resized = cv2.resize(seal, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
         background = np.ones((target_h, target_w, 3), dtype=np.uint8) * 255
         x_offset = (target_w - new_w) // 2
         y_offset = (target_h - new_h) // 2
@@ -220,6 +292,7 @@ class SealExtractor:
         if image is None:
             print(f"无法读取图片: {image_path}")
             return 0
+
         mask = self.detect_red_regions(image)
         seals = self.find_seals(image, mask)
         print(f"在第 {page_num} 页检测到 {len(seals)} 个公章")
@@ -246,6 +319,7 @@ class SealExtractor:
             print(f"    - 检测方法: {seal_info['method']}")
             print(f"    - 置信度分数: {seal_info['score']:.1f}")
             print(f"    - 半径: {seal_info['radius']}px")
+
         return len(seals)
 
     # ---------------- 计算两个印章的重叠度 ----------------
@@ -465,7 +539,7 @@ class SealExtractor:
 
 
 def main():
-    pdf_path = "test.pdf"
+    pdf_path = "test2.pdf"
     extractor = SealExtractor(output_dir='output', seal_size=(1024, 1024))
 
     # 处理PDF并分析重叠，重叠率超过10%认为可疑

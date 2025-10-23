@@ -10,7 +10,7 @@ import threading
 class PDFImageExtractorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PDF扫描件伪造验证工具")
+        self.root.title("多图层伪造公章工具")
         self.root.geometry("800x600")
 
         self.input_folder = tk.StringVar()
@@ -20,7 +20,7 @@ class PDFImageExtractorGUI:
 
     def create_widgets(self):
         # 标题
-        title_label = tk.Label(self.root, text="PDF扫描件伪造验证工具",
+        title_label = tk.Label(self.root, text="多图层伪造公章工具",
                                font=("Arial", 16, "bold"))
         title_label.pack(pady=10)
 

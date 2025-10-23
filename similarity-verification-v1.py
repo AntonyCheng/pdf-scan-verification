@@ -346,7 +346,7 @@ def main():
     pdf_path = "test.pdf"  # 替换为你的PDF文件路径
 
     # 创建提取器
-    extractor = SealExtractor(output_dir='output2')
+    extractor = SealExtractor(output_dir='output')
 
     # 处理PDF (zoom=2.0 相当于144 DPI, zoom=3.0更清晰)
     extractor.process_pdf(pdf_path, zoom=2.5)
